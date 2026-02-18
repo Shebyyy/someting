@@ -26,7 +26,18 @@ serve(async (req) => {
       )
     }
 
-    const { token, client_type } = await req.json()
+    const rawBody = await req.text()
+    let token: string, client_type: string
+    try {
+      const body = JSON.parse(rawBody)
+      token = body.token
+      client_type = body.client_type
+    } catch {
+      return new Response(
+        JSON.stringify({ error: 'Invalid JSON body' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
 
     // Validate required fields
     if (!token || !client_type) {
