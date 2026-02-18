@@ -1,7 +1,8 @@
 // JWT utilities for Commentum Shelby
 // Generate and verify JWT tokens with user information and role
 
-import { create } from 'https://deno.land/x/djwt@v3.0.2/mod.ts';
+import { create, verify, Header, Payload } from 'https://deno.land/x/djwt@v3.0.2/mod.ts';
+import { Hs256 } from 'https://deno.land/x/djwt@v3.0.2/hs256.ts';
 
 export interface JWTPayload {
   user_id: string;
@@ -23,7 +24,7 @@ export async function generateJWT(payload: JWTPayload): Promise<string> {
   }
 
   // Token never expires - user must re-login to refresh role
-  const jwtPayload = {
+  const jwtPayload: Payload = {
     user_id: payload.user_id,
     username: payload.username,
     client_type: payload.client_type,
@@ -31,12 +32,22 @@ export async function generateJWT(payload: JWTPayload): Promise<string> {
     iat: Math.floor(Date.now() / 1000),
   };
 
-  const header = {
+  const header: Header = {
     alg: 'HS256',
     typ: 'JWT',
   };
 
-  const token = await create(header, jwtPayload, secret);
+  // Create crypto key from secret
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign', 'verify']
+  );
+
+  const algorithm = new Hs256(key);
+  const token = await create(header, jwtPayload, algorithm);
 
   return token;
 }
@@ -54,8 +65,17 @@ export async function verifyJWT(token: string): Promise<JWTPayload | null> {
       return null;
     }
 
-    // Use verifyToken function to verify signature
-    const payload = await verifyToken(token, secret);
+    // Create crypto key from secret
+    const key = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode(secret),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign', 'verify']
+    );
+
+    const algorithm = new Hs256(key);
+    const payload = await verify(token, algorithm);
 
     if (!payload) {
       return null;
@@ -64,58 +84,6 @@ export async function verifyJWT(token: string): Promise<JWTPayload | null> {
     return payload as JWTPayload;
   } catch (error) {
     console.error('JWT verification error:', error);
-    return null;
-  }
-}
-
-/**
- * Internal verify function
- */
-async function verifyToken(token: string, secret: string): Promise<JWTPayload | null> {
-  try {
-    // Split token into parts
-    const parts = token.split('.');
-    if (parts.length !== 3) {
-      return null;
-    }
-
-    // Decode payload (Base64URL)
-    const payloadStr = atob(parts[1].replace(/-/g, '+').replace(/_/g, '/'));
-    const payload = JSON.parse(payloadStr);
-
-    // Verify signature
-    const header = JSON.parse(atob(parts[0].replace(/-/g, '+').replace(/_/g, '/')));
-    const cryptoKey = await crypto.subtle.importKey(
-      'raw',
-      new TextEncoder().encode(secret),
-      { name: 'HMAC', hash: 'SHA-256' },
-      false,
-      ['sign', 'verify']
-    );
-
-    const signature = Uint8Array.from(atob(parts[2].replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
-    const data = new TextEncoder().encode(`${parts[0]}.${parts[1]}`);
-
-    const isValid = await crypto.subtle.verify(
-      'HMAC',
-      cryptoKey,
-      signature,
-      data
-    );
-
-    if (!isValid) {
-      return null;
-    }
-
-    return {
-      user_id: payload.user_id,
-      username: payload.username,
-      client_type: payload.client_type,
-      role: payload.role,
-      iat: payload.iat,
-    };
-  } catch (error) {
-    console.error('Token verification error:', error);
     return null;
   }
 }
