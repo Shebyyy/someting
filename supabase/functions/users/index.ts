@@ -104,14 +104,13 @@ async function handleMe(supabase: any, params: any) {
     )
   }
 
-  // Get voting statistics for this user
-  const { data: comments, error: commentsError } = await supabase
-    .from('comments')
-    .select('upvotes, downvotes, vote_score')
-    .eq('user_id', userId)
-    .eq('client_type', clientType)
+  // Get voting statistics for this user (aggregated query)
+  const { data: voteStats, error: statsError } = await supabase
+    .rpc('get_user_vote_stats', {
+      p_user_id: userId,
+      p_client_type: clientType
+    })
 
-  // Calculate total votes
   let totalVotes = {
     upvotes: 0,
     downvotes: 0,
@@ -119,13 +118,24 @@ async function handleMe(supabase: any, params: any) {
     total_comments: 0
   }
 
-  if (!commentsError && comments) {
-    totalVotes = {
-      upvotes: comments.reduce((sum: number, c: any) => sum + (c.upvotes || 0), 0),
-      downvotes: comments.reduce((sum: number, c: any) => sum + (c.downvotes || 0), 0),
-      net_score: comments.reduce((sum: number, c: any) => sum + (c.vote_score || 0), 0),
-      total_comments: comments.length
+  // Fallback to manual calculation if RPC doesn't exist
+  if (statsError || !voteStats) {
+    const { data: comments, error: commentsError } = await supabase
+      .from('comments')
+      .select('upvotes, downvotes, vote_score')
+      .eq('user_id', userId)
+      .eq('client_type', client_type)
+
+    if (!commentsError && comments) {
+      totalVotes = {
+        upvotes: comments.reduce((sum: number, c: any) => sum + (c.upvotes || 0), 0),
+        downvotes: comments.reduce((sum: number, c: any) => sum + (c.downvotes || 0), 0),
+        net_score: comments.reduce((sum: number, c: any) => sum + (c.vote_score || 0), 0),
+        total_comments: comments.length
+      }
     }
+  } else {
+    totalVotes = voteStats
   }
 
   return new Response(
