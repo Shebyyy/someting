@@ -104,6 +104,30 @@ async function handleMe(supabase: any, params: any) {
     )
   }
 
+  // Get voting statistics for this user
+  const { data: comments, error: commentsError } = await supabase
+    .from('comments')
+    .select('upvotes, downvotes, vote_score')
+    .eq('user_id', userId)
+    .eq('client_type', clientType)
+
+  // Calculate total votes
+  let totalVotes = {
+    upvotes: 0,
+    downvotes: 0,
+    net_score: 0,
+    total_comments: 0
+  }
+
+  if (!commentsError && comments) {
+    totalVotes = {
+      upvotes: comments.reduce((sum: number, c: any) => sum + (c.upvotes || 0), 0),
+      downvotes: comments.reduce((sum: number, c: any) => sum + (c.downvotes || 0), 0),
+      net_score: comments.reduce((sum: number, c: any) => sum + (c.vote_score || 0), 0),
+      total_comments: comments.length
+    }
+  }
+
   return new Response(
     JSON.stringify({
       success: true,
@@ -119,6 +143,7 @@ async function handleMe(supabase: any, params: any) {
         created_at: user?.created_at || null,
         updated_at: user?.updated_at || null,
       },
+      voting_stats: totalVotes,
     }),
     { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
   )
