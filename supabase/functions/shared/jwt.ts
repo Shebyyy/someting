@@ -205,14 +205,21 @@ export async function getUserInfoFromDB(supabase: any, userId: string, clientTyp
 /**
  * Get user role from mod_plus table
  * This is for backward compatibility with mod_plus table
+ * Now supports per-platform roles via client_type parameter
  */
-export async function getUserRoleFromDB(supabase: any, userId: string): Promise<string> {
+export async function getUserRoleFromDB(supabase: any, userId: string, clientType?: string): Promise<string> {
   try {
-    const { data, error } = await supabase
+    let query = supabase
       .from('mod_plus')
       .select('role')
-      .eq('user_id', userId)
-      .single()
+      .eq('user_id', userId);
+
+    // If client_type is specified, filter by it (for per-platform roles)
+    if (clientType) {
+      query = query.eq('client_type', clientType);
+    }
+
+    const { data, error } = await query.single();
 
     if (error) {
       // If no record found, return 'user'

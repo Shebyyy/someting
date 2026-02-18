@@ -63,14 +63,21 @@ export function getConfig(): Config {
 /**
  * Get user role from mod_plus table (NOT from environment variables)
  * Requires Supabase client to query database
+ * Now supports per-platform roles via client_type parameter
  */
-export async function getUserRole(supabase: any, userId: string): Promise<string> {
+export async function getUserRole(supabase: any, userId: string, clientType?: string): Promise<string> {
   try {
-    const { data, error } = await supabase
+    let query = supabase
       .from('mod_plus')
       .select('role')
-      .eq('user_id', userId)
-      .single()
+      .eq('user_id', userId);
+
+    // If client_type is specified, filter by it (for per-platform roles)
+    if (clientType) {
+      query = query.eq('client_type', clientType);
+    }
+
+    const { data, error } = await query.single();
 
     if (error) {
       // If no record found, return 'user'
@@ -90,9 +97,10 @@ export async function getUserRole(supabase: any, userId: string): Promise<string
 
 /**
  * Check if user has at least the specified role level
+ * Now supports per-platform roles via client_type parameter
  */
-export async function hasMinRole(supabase: any, userId: string, minRole: string): Promise<boolean> {
-  const userRole = await getUserRole(supabase, userId);
+export async function hasMinRole(supabase: any, userId: string, minRole: string, clientType?: string): Promise<boolean> {
+  const userRole = await getUserRole(supabase, userId, clientType);
   const roleHierarchy: { [key: string]: number } = {
     'user': 0,
     'moderator': 1,

@@ -61,7 +61,8 @@ serve(async (req) => {
     )
 
     // Get user role from mod_plus table (or default to 'user')
-    const userRole = await getUserRole(supabase, verifiedUser.provider_user_id)
+    // Pass client_type for per-platform role support
+    const userRole = await getUserRole(supabase, verifiedUser.provider_user_id, client_type.toLowerCase())
 
     // Upsert user in database with role
     // users table is now the single source of truth for permissions
