@@ -1,4 +1,4 @@
-// Comments Edge Function - Handle comment CRUD operations
+/ Comments Edge Function - Handle comment CRUD operations
 // Uses JWT for authentication
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
