@@ -1,5 +1,5 @@
 import { createDiscordResponse, createErrorResponse, createModerationEmbed } from '../utils.ts'
-import { canModerate } from '../../shared/auth.ts'
+import { canModerate } from '../shared/auth.ts'
 
 // Handle warn command
 export async function handleWarnCommand(supabase: any, moderatorId: string, moderatorName: string, options: any[], registration: any, userRole: string) {
