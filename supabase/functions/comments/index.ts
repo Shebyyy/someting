@@ -121,12 +121,20 @@ async function handleCreateComment(supabase: any, params: any) {
     )
   }
 
+  const userId = jwtPayload.uid
+
   // Convert client code to full client type
   const clientType = CLIENT_CODE_REVERSE_MAP[jwtPayload.ct as keyof typeof CLIENT_CODE_REVERSE_MAP] || 'other'
 
-  // Get username and role from database in ONE query
-  // Database is single source of truth for permissions
-  const userInfo = await getUserInfoFromDB(supabase, jwtPayload.uid, clientType)
+  // Get username, role, and user status from database in ONE query
+  // This combines getUserInfoFromDB and userStatus queries - FASTER!
+  const userInfo = await supabase
+    .from('users')
+    .select('username, role, user_banned, user_muted_until, user_shadow_banned, user_warnings')
+    .eq('user_id', userId)
+    .eq('client_type', clientType)
+    .maybeSingle()
+
   if (!userInfo) {
     return new Response(
       JSON.stringify({ error: 'User not found in database' }),
@@ -134,9 +142,9 @@ async function handleCreateComment(supabase: any, params: any) {
     )
   }
 
-  const userId = jwtPayload.uid
   const username = userInfo.username
   const userRole = userInfo.role
+  const userStatus = userInfo
 
   // Get configuration
   const config = getConfig()
@@ -155,14 +163,6 @@ async function handleCreateComment(supabase: any, params: any) {
       { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   }
-
-  // Check user status from centralized users table
-  const { data: userStatus } = await supabase
-    .from('users')
-    .select('user_banned, user_muted_until, user_shadow_banned, user_warnings')
-    .eq('user_id', userId)
-    .eq('client_type', clientType)
-    .single()
 
   // Check if banned
   if (userStatus?.user_banned) {
