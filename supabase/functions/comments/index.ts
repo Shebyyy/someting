@@ -128,14 +128,15 @@ async function handleCreateComment(supabase: any, params: any) {
 
   // Get username, role, and user status from database in ONE query
   // This combines getUserInfoFromDB and userStatus queries - FASTER!
-  const userInfo = await supabase
+  const { data: userInfo, error: userError } = await supabase
     .from('users')
     .select('username, role, user_banned, user_muted_until, user_shadow_banned, user_warnings')
     .eq('user_id', userId)
     .eq('client_type', clientType)
     .maybeSingle()
 
-  if (!userInfo) {
+  if (userError || !userInfo || !userInfo.username) {
+    console.error('User not found or username is null:', { userId, clientType, userError, userInfo })
     return new Response(
       JSON.stringify({ error: 'User not found in database' }),
       { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -143,7 +144,7 @@ async function handleCreateComment(supabase: any, params: any) {
   }
 
   const username = userInfo.username
-  const userRole = userInfo.role
+  const userRole = userInfo.role || 'user'
   const userStatus = userInfo
 
   // Get configuration
