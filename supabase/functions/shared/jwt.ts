@@ -1,8 +1,7 @@
 // JWT utilities for Commentum Shelby
 // Generate and verify JWT tokens with user information and role
 
-import { create, verify, Header, Payload } from 'https://deno.land/x/djwt@v3.0.2/mod.ts';
-import { Hs256 } from 'https://deno.land/x/djwt@v3.0.2/hs256.ts';
+import { create, verify, Algorithm, Header, Payload } from 'https://deno.land/x/djwt@v3.0.2/mod.ts';
 
 export interface JWTPayload {
   user_id: string;
@@ -37,17 +36,9 @@ export async function generateJWT(payload: JWTPayload): Promise<string> {
     typ: 'JWT',
   };
 
-  // Create crypto key from secret
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign', 'verify']
-  );
-
-  const algorithm = new Hs256(key);
-  const token = await create(header, jwtPayload, algorithm);
+  // Use HS256 algorithm directly with the secret as string
+  const algorithm: Algorithm = 'HS256';
+  const token = await create(header, jwtPayload, secret);
 
   return token;
 }
@@ -65,17 +56,9 @@ export async function verifyJWT(token: string): Promise<JWTPayload | null> {
       return null;
     }
 
-    // Create crypto key from secret
-    const key = await crypto.subtle.importKey(
-      'raw',
-      new TextEncoder().encode(secret),
-      { name: 'HMAC', hash: 'SHA-256' },
-      false,
-      ['sign', 'verify']
-    );
-
-    const algorithm = new Hs256(key);
-    const payload = await verify(token, algorithm);
+    // Use HS256 algorithm directly with the secret as string
+    const algorithm: Algorithm = 'HS256';
+    const payload = await verify(token, secret, algorithm);
 
     if (!payload) {
       return null;
