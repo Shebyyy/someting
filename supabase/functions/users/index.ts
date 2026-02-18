@@ -173,7 +173,7 @@ async function handleGetUserInfo(supabase: any, params: any) {
   }
 
   const queryUserId = isSelf ? userId : target_user_id
-  const queryClientType = isSelf ? clientType : target_client_type
+  const queryClientType = isSelf ? clientType : (target_client_type || clientType)
 
   // Get user from users table
   const { data: user, error: userError } = await supabase
@@ -229,12 +229,12 @@ async function handleGetUserStats(supabase: any, params: any) {
   }
 
   const queryUserId = isSelf ? userId : target_user_id
-  const queryClientType = isSelf ? clientType : target_client_type
+  const queryClientType = isSelf ? clientType : (target_client_type || clientType)
 
   // Get user stats from comments
   const { data: comments, error: commentsError } = await supabase
     .from('comments')
-    .select('user_id, client_type, deleted, upvotes, downvotes, vote_score, user_warnings, user_banned, user_shadow_banned, user_muted_until')
+    .select('user_id, client_type, deleted, upvotes, downvotes, vote_score')
     .eq('user_id', queryUserId)
     .eq('client_type', queryClientType)
 
@@ -246,6 +246,14 @@ async function handleGetUserStats(supabase: any, params: any) {
     )
   }
 
+  // Get user status from users table
+  const { data: userStatus } = await supabase
+    .from('users')
+    .select('user_warnings, user_banned, user_shadow_banned, user_muted_until')
+    .eq('user_id', queryUserId)
+    .eq('client_type', queryClientType)
+    .maybeSingle()
+
   // Calculate stats
   const stats = {
     total_comments: comments?.length || 0,
@@ -254,13 +262,13 @@ async function handleGetUserStats(supabase: any, params: any) {
     total_upvotes: comments?.reduce((sum: number, c: any) => sum + (c.upvotes || 0), 0) || 0,
     total_downvotes: comments?.reduce((sum: number, c: any) => sum + (c.downvotes || 0), 0) || 0,
     net_score: comments?.reduce((sum: number, c: any) => sum + (c.vote_score || 0), 0) || 0,
-    warnings: comments?.[0]?.user_warnings || 0,
-    is_banned: comments?.[0]?.user_banned || false,
-    is_shadow_banned: comments?.[0]?.user_shadow_banned || false,
-    is_muted: comments?.[0]?.user_muted_until
-      ? new Date(comments[0].user_muted_until) > new Date()
+    warnings: userStatus?.user_warnings || 0,
+    is_banned: userStatus?.user_banned || false,
+    is_shadow_banned: userStatus?.user_shadow_banned || false,
+    is_muted: userStatus?.user_muted_until
+      ? new Date(userStatus.user_muted_until) > new Date()
       : false,
-    muted_until: comments?.[0]?.user_muted_until || null,
+    muted_until: userStatus?.user_muted_until || null,
   }
 
   return new Response(
@@ -289,7 +297,7 @@ async function handleGetUserHistory(supabase: any, params: any) {
   }
 
   const queryUserId = isSelf ? userId : target_user_id
-  const queryClientType = isSelf ? clientType : target_client_type
+  const queryClientType = isSelf ? clientType : (target_client_type || clientType)
 
   // Get user's comment history
   const { data: comments, error: commentsError } = await supabase
