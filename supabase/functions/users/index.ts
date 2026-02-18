@@ -231,15 +231,14 @@ async function handleGetUserStats(supabase: any, params: any) {
   const queryUserId = isSelf ? userId : target_user_id
   const queryClientType = isSelf ? clientType : (target_client_type || clientType)
 
-  // Get user stats from comments
-  const { data: comments, error: commentsError } = await supabase
-    .from('comments')
-    .select('user_id, client_type, deleted, upvotes, downvotes, vote_score')
-    .eq('user_id', queryUserId)
-    .eq('client_type', queryClientType)
+  // Get user stats using fast database aggregation function
+  const { data: statsData, error: statsError } = await supabase.rpc('get_user_stats_agg', {
+    user_id_param: queryUserId,
+    client_type_param: queryClientType
+  })
 
-  if (commentsError) {
-    console.error('Error fetching user stats:', commentsError)
+  if (statsError || !statsData || statsData.length === 0) {
+    console.error('Error fetching user stats:', statsError)
     return new Response(
       JSON.stringify({ error: 'Failed to fetch user stats' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -254,14 +253,15 @@ async function handleGetUserStats(supabase: any, params: any) {
     .eq('client_type', queryClientType)
     .maybeSingle()
 
-  // Calculate stats
-  const stats = {
-    total_comments: comments?.length || 0,
-    active_comments: comments?.filter((c: any) => !c.deleted).length || 0,
-    deleted_comments: comments?.filter((c: any) => c.deleted).length || 0,
-    total_upvotes: comments?.reduce((sum: number, c: any) => sum + (c.upvotes || 0), 0) || 0,
-    total_downvotes: comments?.reduce((sum: number, c: any) => sum + (c.downvotes || 0), 0) || 0,
-    net_score: comments?.reduce((sum: number, c: any) => sum + (c.vote_score || 0), 0) || 0,
+  // Combine stats
+  const stats = statsData[0]
+  const finalStats = {
+    total_comments: stats.total_comments || 0,
+    active_comments: stats.active_comments || 0,
+    deleted_comments: stats.deleted_comments || 0,
+    total_upvotes: stats.total_upvotes || 0,
+    total_downvotes: stats.total_downvotes || 0,
+    net_score: stats.net_score || 0,
     warnings: userStatus?.user_warnings || 0,
     is_banned: userStatus?.user_banned || false,
     is_shadow_banned: userStatus?.user_shadow_banned || false,
@@ -276,7 +276,7 @@ async function handleGetUserStats(supabase: any, params: any) {
       success: true,
       user_id: queryUserId,
       client_type: queryClientType,
-      stats,
+      stats: finalStats,
       is_self: isSelf,
     }),
     { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
