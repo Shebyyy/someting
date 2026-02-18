@@ -1,4 +1,4 @@
-// Votes Edge Function - Handle comment voting
+/ Votes Edge Function - Handle comment voting
 // Uses JWT for authentication
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
@@ -56,12 +56,12 @@ serve(async (req) => {
     const jwtPayload = await verifyJWT(jwt_token)
     if (!jwtPayload) {
       return new Response(
-        JSON.stringify({ error: 'Invalid or expired JWT token' }),
+        JSON.stringify({ error: 'Invalid or expired token' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
-    const userId = jwtPayload.user_id
+    const userId = jwtPayload.uid
 
     // Get comment
     const { data: comment, error: commentError } = await supabase
@@ -79,13 +79,8 @@ serve(async (req) => {
 
     const clientType = comment.client_type
 
-    // Check if user is voting on their own comment
-    if (comment.user_id === userId) {
-      return new Response(
-        JSON.stringify({ error: 'You cannot vote on your own comment' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
+    // NOTE: Users can vote on their own comments
+    // This allows self-voting for engagement
 
     // Parse existing votes
     const userVotes = comment.user_votes ? JSON.parse(comment.user_votes) : {}
