@@ -3,9 +3,8 @@
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.7/denonext/supabase-js.mjs'
-import { verifyJWT, getUserRoleFromDB } from '../shared/jwt.ts'
+import { verifyJWT, getUserInfoFromDB, CLIENT_CODE_REVERSE_MAP } from '../shared/jwt.ts'
 import { getUserRole, hasMinRole } from '../shared/config.ts'
-import { getUserStatistics } from '../shared/userManagement.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -36,24 +35,39 @@ serve(async (req) => {
     const jwtPayload = await verifyJWT(jwt_token)
     if (!jwtPayload) {
       return new Response(
-        JSON.stringify({ error: 'Invalid or expired JWT token' }),
+        JSON.stringify({ error: 'Invalid or expired token' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
-    const userId = jwtPayload.user_id
-    const userRole = jwtPayload.role
+    // Convert client code to full client type
+    const clientType = CLIENT_CODE_REVERSE_MAP[jwtPayload.ct as keyof typeof CLIENT_CODE_REVERSE_MAP] || 'other'
+
+    // Get username and role from database in ONE query
+    const userInfo = await getUserInfoFromDB(supabase, jwtPayload.uid, clientType)
+    if (!userInfo) {
+      return new Response(
+        JSON.stringify({ error: 'User not found in database' }),
+        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    const userId = jwtPayload.uid
+    const userRole = userInfo.role
 
     // Handle each action
     switch (action) {
+      case 'me':
+        return await handleMe(supabase, { userId, clientType, username: userInfo.username, role: userRole })
+
       case 'get_user_info':
-        return await handleGetUserInfo(supabase, { userId, userRole, target_user_id, target_client_type })
+        return await handleGetUserInfo(supabase, { userId, clientType, userRole, target_user_id, target_client_type })
 
       case 'get_user_stats':
-        return await handleGetUserStats(supabase, { userId, userRole, target_user_id, target_client_type })
+        return await handleGetUserStats(supabase, { userId, clientType, userRole, target_user_id, target_client_type })
 
       case 'get_user_history':
-        return await handleGetUserHistory(supabase, { userId, userRole, target_user_id, target_client_type })
+        return await handleGetUserHistory(supabase, { userId, clientType, userRole, target_user_id, target_client_type })
 
       default:
         return new Response(
@@ -71,13 +85,52 @@ serve(async (req) => {
   }
 })
 
+async function handleMe(supabase: any, params: any) {
+  const { userId, clientType, username, role } = params
+
+  // Get full user info
+  const { data: user, error } = await supabase
+    .from('users')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('client_type', clientType)
+    .single()
+
+  if (error && error.code !== 'PGRST116') {
+    console.error('Error fetching user info:', error)
+    return new Response(
+      JSON.stringify({ error: 'Failed to fetch user info' }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
+  }
+
+  return new Response(
+    JSON.stringify({
+      success: true,
+      user: {
+        user_id: userId,
+        username: username,
+        client_type: clientType,
+        role: role,
+        user_banned: user?.user_banned || false,
+        user_muted_until: user?.user_muted_until || null,
+        user_shadow_banned: user?.user_shadow_banned || false,
+        user_warnings: user?.user_warnings || 0,
+        created_at: user?.created_at || null,
+        updated_at: user?.updated_at || null,
+      },
+    }),
+    { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+  )
+}
+
 async function handleGetUserInfo(supabase: any, params: any) {
-  const { userId, userRole, target_user_id, target_client_type } = params
+  const { userId, clientType, userRole, target_user_id, target_client_type } = params
 
   // For getting own info, no special permissions needed
   // For getting others' info, moderator role required
   const isSelf = !target_user_id || target_user_id === userId
-  if (!isSelf && !(await hasMinRole(supabase, userId, 'moderator'))) {
+  if (!isSelf && !(await hasMinRole(supabase, userId, 'moderator', clientType))) {
     return new Response(
       JSON.stringify({ error: 'Insufficient permissions. Moderator role required to view other users.' }),
       { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -85,7 +138,7 @@ async function handleGetUserInfo(supabase: any, params: any) {
   }
 
   const queryUserId = isSelf ? userId : target_user_id
-  const queryClientType = isSelf ? userRole : target_client_type
+  const queryClientType = isSelf ? clientType : target_client_type
 
   // Get user from users table
   const { data: user, error: userError } = await supabase
@@ -103,8 +156,8 @@ async function handleGetUserInfo(supabase: any, params: any) {
     )
   }
 
-  // Get user role from environment
-  const role = getUserRole(queryUserId)
+  // Get user role from database
+  const role = await getUserRole(supabase, queryUserId, queryClientType)
 
   return new Response(
     JSON.stringify({
@@ -113,10 +166,14 @@ async function handleGetUserInfo(supabase: any, params: any) {
         user_id: user.user_id,
         username: user.username,
         client_type: user.client_type,
+        role: role,
+        user_banned: user.user_banned,
+        user_muted_until: user.user_muted_until,
+        user_shadow_banned: user.user_shadow_banned,
+        user_warnings: user.user_warnings,
         created_at: user.created_at,
         updated_at: user.updated_at,
       } : null,
-      role,
       is_self: isSelf,
     }),
     { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -124,12 +181,12 @@ async function handleGetUserInfo(supabase: any, params: any) {
 }
 
 async function handleGetUserStats(supabase: any, params: any) {
-  const { userId, userRole, target_user_id, target_client_type } = params
+  const { userId, clientType, userRole, target_user_id, target_client_type } = params
 
   // For getting own stats, no special permissions needed
   // For getting others' stats, moderator role required
   const isSelf = !target_user_id || target_user_id === userId
-  if (!isSelf && !(await hasMinRole(supabase, userId, 'moderator'))) {
+  if (!isSelf && !(await hasMinRole(supabase, userId, 'moderator', clientType))) {
     return new Response(
       JSON.stringify({ error: 'Insufficient permissions. Moderator role required to view other users.' }),
       { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -137,7 +194,7 @@ async function handleGetUserStats(supabase: any, params: any) {
   }
 
   const queryUserId = isSelf ? userId : target_user_id
-  const queryClientType = isSelf ? userRole : target_client_type
+  const queryClientType = isSelf ? clientType : target_client_type
 
   // Get user stats from comments
   const { data: comments, error: commentsError } = await supabase
@@ -184,12 +241,12 @@ async function handleGetUserStats(supabase: any, params: any) {
 }
 
 async function handleGetUserHistory(supabase: any, params: any) {
-  const { userId, userRole, target_user_id, target_client_type } = params
+  const { userId, clientType, userRole, target_user_id, target_client_type } = params
 
   // For getting own history, no special permissions needed
   // For getting others' history, moderator role required
   const isSelf = !target_user_id || target_user_id === userId
-  if (!isSelf && !(await hasMinRole(supabase, userId, 'moderator'))) {
+  if (!isSelf && !(await hasMinRole(supabase, userId, 'moderator', clientType))) {
     return new Response(
       JSON.stringify({ error: 'Insufficient permissions. Moderator role required to view other users.' }),
       { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -197,7 +254,7 @@ async function handleGetUserHistory(supabase: any, params: any) {
   }
 
   const queryUserId = isSelf ? userId : target_user_id
-  const queryClientType = isSelf ? userRole : target_client_type
+  const queryClientType = isSelf ? clientType : target_client_type
 
   // Get user's comment history
   const { data: comments, error: commentsError } = await supabase
