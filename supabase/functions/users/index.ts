@@ -124,7 +124,7 @@ async function handleMe(supabase: any, params: any) {
       .from('comments')
       .select('upvotes, downvotes, vote_score')
       .eq('user_id', userId)
-      .eq('client_type', client_type)
+      .eq('client_type', clientType)
 
     if (!commentsError && comments) {
       totalVotes = {
