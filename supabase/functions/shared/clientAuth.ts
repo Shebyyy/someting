@@ -25,7 +25,18 @@ async function verifyMalToken(accessToken: string): Promise<VerifiedUser | null>
       return null;
     }
 
-    const data = await res.json();
+    const responseText = await res.text();
+    console.log('MAL response:', responseText.substring(0, 200)); // Log first 200 chars for debugging
+
+    let data;
+    try {
+      data = JSON.parse(responseText);
+    } catch (parseError) {
+      console.error('MAL: Failed to parse JSON response', parseError);
+      console.error('Response text:', responseText.substring(0, 500));
+      return null;
+    }
+
     return {
       provider_user_id: String(data.id),
       username: data.name,
@@ -60,11 +71,22 @@ async function verifyAnilistToken(accessToken: string): Promise<VerifiedUser | n
       return null;
     }
 
-    const data = await res.json();
+    const responseText = await res.text();
+    console.log('AniList response:', responseText.substring(0, 200)); // Log first 200 chars for debugging
+
+    let data;
+    try {
+      data = JSON.parse(responseText);
+    } catch (parseError) {
+      console.error('AniList: Failed to parse JSON response', parseError);
+      console.error('Response text:', responseText.substring(0, 500));
+      return null;
+    }
+
     const viewer = data?.data?.Viewer;
 
     if (!viewer) {
-      console.error('AniList: No viewer data in response');
+      console.error('AniList: No viewer data in response', data);
       return null;
     }
 
@@ -98,11 +120,22 @@ async function verifySimklToken(accessToken: string): Promise<VerifiedUser | nul
       return null;
     }
 
-    const data = await res.json();
+    const responseText = await res.text();
+    console.log('Simkl response:', responseText.substring(0, 200)); // Log first 200 chars for debugging
+
+    let data;
+    try {
+      data = JSON.parse(responseText);
+    } catch (parseError) {
+      console.error('Simkl: Failed to parse JSON response', parseError);
+      console.error('Response text:', responseText.substring(0, 500));
+      return null;
+    }
+
     const account = data?.account;
 
     if (!account) {
-      console.error('Simkl: No account data in response');
+      console.error('Simkl: No account data in response', data);
       return null;
     }
 
