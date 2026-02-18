@@ -3,7 +3,7 @@
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.7/denonext/supabase-js.mjs'
-import { verifyJWT, getUserRoleFromDB } from '../shared/jwt.ts'
+import { verifyJWT, getUserInfoFromDB, CLIENT_CODE_REVERSE_MAP } from '../shared/jwt.ts'
 import { getConfig, getUserRole, hasMinRole } from '../shared/config.ts'
 import { queueDiscordNotification } from '../shared/discordNotifications.ts'
 import { getOrCreateUser, updateUserCommentActivity } from '../shared/userManagement.ts'
@@ -45,19 +45,29 @@ serve(async (req) => {
       jwtPayload = await verifyJWT(jwt_token)
       if (!jwtPayload) {
         return new Response(
-          JSON.stringify({ error: 'Invalid or expired JWT token' }),
+          JSON.stringify({ error: 'Invalid or expired token' }),
           { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         )
       }
 
-      // Refresh role from database (in case it changed)
-      jwtPayload.role = await getUserRoleFromDB(supabase, jwtPayload.user_id)
+      // Convert client code to full client type
+      const clientType = CLIENT_CODE_REVERSE_MAP[jwtPayload.ct as keyof typeof CLIENT_CODE_REVERSE_MAP] || 'other'
+
+      // Get username and role from database in ONE query
+      // Database is single source of truth for permissions
+      const userInfo = await getUserInfoFromDB(supabase, jwtPayload.uid, clientType)
+      if (!userInfo) {
+        return new Response(
+          JSON.stringify({ error: 'User not found in database' }),
+          { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      }
 
       currentUser = {
-        user_id: jwtPayload.user_id,
-        username: jwtPayload.username,
-        role: jwtPayload.role,
-        client_type: jwtPayload.client_type,
+        user_id: jwtPayload.uid,
+        username: userInfo.username,
+        role: userInfo.role,
+        client_type: clientType,
       }
     }
 
@@ -111,11 +121,22 @@ async function handleCreateComment(supabase: any, params: any) {
     )
   }
 
-  // Get user role from database (in case it changed)
-  const userRole = await getUserRoleFromDB(supabase, jwtPayload.user_id)
-  const userId = jwtPayload.user_id
-  const username = jwtPayload.username
-  const clientType = jwtPayload.client_type
+  // Convert client code to full client type
+  const clientType = CLIENT_CODE_REVERSE_MAP[jwtPayload.ct as keyof typeof CLIENT_CODE_REVERSE_MAP] || 'other'
+
+  // Get username and role from database in ONE query
+  // Database is single source of truth for permissions
+  const userInfo = await getUserInfoFromDB(supabase, jwtPayload.uid, clientType)
+  if (!userInfo) {
+    return new Response(
+      JSON.stringify({ error: 'User not found in database' }),
+      { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
+  }
+
+  const userId = jwtPayload.uid
+  const username = userInfo.username
+  const userRole = userInfo.role
 
   // Get configuration
   const config = getConfig()
@@ -376,6 +397,22 @@ async function handleEditComment(supabase: any, params: any) {
     )
   }
 
+  // Convert client code to full client type
+  const clientType = CLIENT_CODE_REVERSE_MAP[jwtPayload.ct as keyof typeof CLIENT_CODE_REVERSE_MAP] || 'other'
+
+  // Get username and role from database in ONE query
+  const userInfo = await getUserInfoFromDB(supabase, jwtPayload.uid, clientType)
+  if (!userInfo) {
+    return new Response(
+      JSON.stringify({ error: 'User not found in database' }),
+      { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
+  }
+
+  const userId = jwtPayload.uid
+  const username = userInfo.username
+  const userRole = userInfo.role
+
   // Get comment
   const { data: comment } = await supabase
     .from('comments')
@@ -391,7 +428,7 @@ async function handleEditComment(supabase: any, params: any) {
   }
 
   // Check ownership
-  if (comment.user_id !== jwtPayload.user_id && !(await hasMinRole(supabase, jwtPayload.user_id, 'moderator'))) {
+  if (comment.user_id !== userId && !(await hasMinRole(supabase, userId, 'moderator'))) {
     return new Response(
       JSON.stringify({ error: 'You can only edit your own comments' }),
       { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -412,7 +449,7 @@ async function handleEditComment(supabase: any, params: any) {
     oldContent: comment.content,
     newContent: content,
     editedAt: new Date().toISOString(),
-    editedBy: jwtPayload.user_id,
+    editedBy: userId,
   })
 
   // Update comment
@@ -444,8 +481,8 @@ async function handleEditComment(supabase: any, params: any) {
       media_type: updatedComment.media_type
     },
     user: {
-      id: jwtPayload.user_id,
-      username: jwtPayload.username,
+      id: userId,
+      username: username,
       avatar: null
     },
     media: {
@@ -483,6 +520,21 @@ async function handleDeleteComment(supabase: any, params: any) {
     )
   }
 
+  // Convert client code to full client type
+  const clientType = CLIENT_CODE_REVERSE_MAP[jwtPayload.ct as keyof typeof CLIENT_CODE_REVERSE_MAP] || 'other'
+
+  // Get username and role from database in ONE query
+  const userInfo = await getUserInfoFromDB(supabase, jwtPayload.uid, clientType)
+  if (!userInfo) {
+    return new Response(
+      JSON.stringify({ error: 'User not found in database' }),
+      { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
+  }
+
+  const userId = jwtPayload.uid
+  const username = userInfo.username
+
   // Get comment
   const { data: comment } = await supabase
     .from('comments')
@@ -498,7 +550,7 @@ async function handleDeleteComment(supabase: any, params: any) {
   }
 
   // Check ownership
-  if (comment.user_id !== jwtPayload.user_id && !(await hasMinRole(supabase, jwtPayload.user_id, 'moderator'))) {
+  if (comment.user_id !== userId && !(await hasMinRole(supabase, userId, 'moderator'))) {
     return new Response(
       JSON.stringify({ error: 'You can only delete your own comments' }),
       { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -511,7 +563,7 @@ async function handleDeleteComment(supabase: any, params: any) {
     .update({
       deleted: true,
       deleted_at: new Date().toISOString(),
-      deleted_by: jwtPayload.user_id,
+      deleted_by: userId,
     })
     .eq('id', comment_id)
     .select()
@@ -533,8 +585,8 @@ async function handleDeleteComment(supabase: any, params: any) {
     },
     moderator: null,
     user: {
-      id: jwtPayload.user_id,
-      username: jwtPayload.username,
+      id: userId,
+      username: username,
       avatar: null
     },
     media: {
@@ -563,17 +615,33 @@ async function handleModDeleteComment(supabase: any, params: any) {
     )
   }
 
-  // Verify JWT and check moderator role
+  // Verify JWT
   const jwtPayload = await verifyJWT(jwt_token)
   if (!jwtPayload) {
     return new Response(
-      JSON.stringify({ error: 'Invalid or expired JWT token' }),
+      JSON.stringify({ error: 'Invalid or expired token' }),
       { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   }
 
+  // Convert client code to full client type
+  const clientType = CLIENT_CODE_REVERSE_MAP[jwtPayload.ct as keyof typeof CLIENT_CODE_REVERSE_MAP] || 'other'
+
+  // Get username and role from database in ONE query
+  const userInfo = await getUserInfoFromDB(supabase, jwtPayload.uid, clientType)
+  if (!userInfo) {
+    return new Response(
+      JSON.stringify({ error: 'User not found in database' }),
+      { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
+  }
+
+  const userId = jwtPayload.uid
+  const username = userInfo.username
+  const userRole = userInfo.role
+
   // Check moderator role
-  if (!(await hasMinRole(supabase, jwtPayload.user_id, 'moderator'))) {
+  if (!(await hasMinRole(supabase, userId, 'moderator'))) {
     return new Response(
       JSON.stringify({ error: 'Insufficient permissions' }),
       { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -600,10 +668,10 @@ async function handleModDeleteComment(supabase: any, params: any) {
     .update({
       deleted: true,
       deleted_at: new Date().toISOString(),
-      deleted_by: jwtPayload.user_id,
+      deleted_by: userId,
       moderated: true,
       moderated_at: new Date().toISOString(),
-      moderated_by: jwtPayload.user_id,
+      moderated_by: userId,
       moderation_action: 'mod_delete',
     })
     .eq('id', comment_id)
@@ -625,9 +693,9 @@ async function handleModDeleteComment(supabase: any, params: any) {
       media_type: deletedComment.media_type
     },
     moderator: {
-      id: jwtPayload.user_id,
-      username: jwtPayload.username,
-      role: jwtPayload.role
+      id: userId,
+      username: username,
+      role: userRole
     },
     user: {
       id: deletedComment.user_id,
@@ -650,9 +718,9 @@ async function handleModDeleteComment(supabase: any, params: any) {
       success: true,
       comment: deletedComment,
       moderator: {
-        id: jwtPayload.user_id,
-        username: jwtPayload.username,
-        role: jwtPayload.role
+        id: userId,
+        username: username,
+        role: userRole
       }
     }),
     { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

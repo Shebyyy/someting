@@ -26,18 +26,7 @@ serve(async (req) => {
       )
     }
 
-    const rawBody = await req.text()
-    let token: string, client_type: string
-    try {
-      const body = JSON.parse(rawBody)
-      token = body.token
-      client_type = body.client_type
-    } catch {
-      return new Response(
-        JSON.stringify({ error: 'Invalid JSON body' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
+    const { token, client_type } = await req.json()
 
     // Validate required fields
     if (!token || !client_type) {
@@ -71,16 +60,18 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     )
 
-    // Get user role from mod_plus table
+    // Get user role from mod_plus table (or default to 'user')
     const userRole = await getUserRole(supabase, verifiedUser.provider_user_id)
 
-    // Upsert user in database (minimal user info)
+    // Upsert user in database with role
+    // users table is now the single source of truth for permissions
     const { error: userError } = await supabase
       .from('users')
       .upsert({
         user_id: verifiedUser.provider_user_id,
         username: verifiedUser.username,
         client_type: client_type.toLowerCase(),
+        role: userRole,  // Store role in users table
       }, {
         onConflict: 'user_id,client_type',
         ignoreDuplicates: false,
@@ -91,13 +82,12 @@ serve(async (req) => {
       // Continue anyway - user creation is not critical for auth flow
     }
 
-    // Generate JWT token (never expires until re-login)
-    const jwtToken = await generateJWT({
-      user_id: verifiedUser.provider_user_id,
-      username: verifiedUser.username,
-      client_type: client_type.toLowerCase(),
-      role: userRole,
-    })
+    // Generate optimized JWT token (shortest possible, NO role)
+    // JWT contains only identity (uid, ct) - permissions come from database
+    const jwtToken = await generateJWT(
+      verifiedUser.provider_user_id,
+      client_type.toLowerCase()
+    )
 
     // Return JWT token and user info
     return new Response(
